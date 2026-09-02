@@ -3997,6 +3997,23 @@ export const Route = createFileRoute("/api/chat-ai")({
                 attached.push(url);
               }
 
+              // TRUTH ABOUT WHAT LEAVES WITH THE REPLY.
+              // A successful call that attached zero images used to come back
+              // as ok:true, so the agent kept writing as if a photo were on
+              // its way. Zero attached is a failure, stated as such.
+              if (attached.length === 0) {
+                return {
+                  result: {
+                    ok: false,
+                    error: "no_images_saved",
+                    attached_count: 0,
+                    in_stock_colors: inStockLabels,
+                    in_stock_variants: liveVariants,
+                    message: `NO image is attached to your reply and none will be. Do not mention a photo, do not promise one, do not say one is on the way. Confirm the model is available and name these live variants in one warm selling sentence: ${liveVariants.join(" | ") || "-"}.`,
+                  },
+                };
+              }
+
               return {
                 result: {
                   ok: true,
@@ -4007,17 +4024,14 @@ export const Route = createFileRoute("/api/chat-ai")({
                     : {}),
                   in_stock_colors: inStockLabels,
                   in_stock_variants: liveVariants,
-                  message:
-                    attached.length > 0
-                      ? soldOutRequestedLabel
-                        ? `The color "${soldOutRequestedLabel}" is out of stock, so the attached photos are of the in-stock variants only. Confirm to the customer that the SAME model is available — never say the product does not exist — name these exact live variants with their sizes: ${liveVariants.join(" | ") || inStockLabels.join(", ")}, and say in the same short natural sentence that "${soldOutRequestedLabel}" is not available right now. Do not describe the attached photos as the requested color, and end with one easy question that moves him to buy.`
-                        : colorVerified && matchedColorLabel
-                          ? `Images of the color "${matchedColorLabel}" will be shown to the customer alongside your reply. Do NOT paste the URLs in the text, and do NOT describe them as any other color.`
-                          : `Images will be shown to the customer alongside your reply; they are of in-stock variants only (${liveVariants.join(" | ") || "-"}). Do NOT paste the URLs in the text, and never mention any variant that is out of stock unless the customer asked about it by name.`
-                      : `No images are saved for the in-stock variants of this product. Still confirm the model is available and name these live variants in a warm selling sentence: ${liveVariants.join(" | ") || "-"}.`,
-
+                  message: soldOutRequestedLabel
+                    ? `The color "${soldOutRequestedLabel}" is out of stock, so the attached photos are of the in-stock variants only. Confirm to the customer that the SAME model is available — never say the product does not exist — name these exact live variants with their sizes: ${liveVariants.join(" | ") || inStockLabels.join(", ")}, and say in the same short natural sentence that "${soldOutRequestedLabel}" is not available right now. Do not describe the attached photos as the requested color, and end with one easy question that moves him to buy.`
+                    : colorVerified && matchedColorLabel
+                      ? `Images of the color "${matchedColorLabel}" will be shown to the customer alongside your reply. Do NOT paste the URLs in the text, and do NOT describe them as any other color.`
+                      : `Images will be shown to the customer alongside your reply; they are of in-stock variants only (${liveVariants.join(" | ") || "-"}). Do NOT paste the URLs in the text, and never mention any variant that is out of stock unless the customer asked about it by name.`,
                 },
               };
+
 
 
             } catch (e) {
@@ -4073,15 +4087,13 @@ export const Route = createFileRoute("/api/chat-ai")({
           let attachmentsKnownToModel = 0;
 
           // ---------------------------------------------------------------
-          // FAST PHOTO PATH (no AI involved).
-          // The customer named a product that exists in THIS turn's fresh
-          // snapshot and is showable, and asked for its photo. Resolving the
-          // media is pure database work, so it happens NOW — before the first
-          // model call — instead of after the whole tool loop. The images are
-          // therefore already part of the model's context on iteration 1, so
-          // the draft text is written knowing they are being sent and the
-          // extra "attachment-aware regeneration" call never fires.
-          {
+          // EXPLICIT PHOTO REQUEST (the one case that needs no judgement).
+          // The customer literally asked to SEE a product they named in this
+          // same message. That is the only situation where the code resolves
+          // media on its own; every other "should the photo go out now?"
+          // decision belongs to the agent, through attach_product_media, so
+          // pictures follow the conversation instead of every product mention.
+          if (customerAskedForProductPhoto(message)) {
             const named = findNamedProduct(
               [message],
               merchantData.products as any[],
@@ -4095,8 +4107,8 @@ export const Route = createFileRoute("/api/chat-ai")({
                   JSON.stringify({ product_id: named.id, limit: 4, ...(color ? { color } : {}) }),
                 );
               } catch {
-                // Never let the fast path break the turn; the deterministic
-                // fallback after the tool loop still covers this case.
+                // Never let this shortcut break the turn; the agent can still
+                // attach the media itself during the tool loop.
               }
               if (agentAttachments.length > 0) {
                 const attCtx = buildAttachmentContextMessage(agentAttachments as any);
@@ -4107,6 +4119,7 @@ export const Route = createFileRoute("/api/chat-ai")({
               }
             }
           }
+
           for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
             // A stalled upstream must never hang the customer's turn forever:
             // cap every gateway call and treat a timeout like a transient
@@ -4395,9 +4408,12 @@ export const Route = createFileRoute("/api/chat-ai")({
           }
 
           // Media attachment belongs to the agent (`attach_product_media`).
-          // These fallbacks only ever fire for a product that is present in
-          // THIS turn's fresh snapshot and still has stock — never for a
-          // [SOLD_OUT] product.
+          // The only fallback left is the customer's own explicit request: he
+          // asked to see it, or he sent a picture of it, and the agent did not
+          // attach anything. Everything else — recommending, comparing, simply
+          // mentioning a product — is the agent's judgement call in the same
+          // turn it writes the text, which is what stops photos from arriving
+          // in the middle of collecting an address or confirming an order.
           const fallbackMatchedId = showableProductId(merchantData.products, matchedProductId);
           if (
             fallbackMatchedId &&
@@ -4410,25 +4426,6 @@ export const Route = createFileRoute("/api/chat-ai")({
             );
           }
 
-          // Deterministic sales fallback: the product the TURN is about — the
-          // one the customer named, or the one the agent's own draft reply is
-          // talking about — is shown now if the model forgot the media tool.
-          // Matching the draft reply too is what makes the text and the photo
-          // agree: the agent can no longer write "ده شكله" with nothing sent.
-          if (agentAttachments.length === 0) {
-            const named = findNamedProduct(
-              [message, reply],
-              merchantData.products as any[],
-              (p: any) => isProductShowable(p),
-            ) as (typeof merchantData.products)[number] | null;
-
-            if (named) {
-              const color = requestedColorFor(named.id);
-              await executeAttachProductMedia(
-                JSON.stringify({ product_id: named.id, limit: 4, ...(color ? { color } : {}) }),
-              );
-            }
-          }
 
           // ---------------------------------------------------------------
           // TEXT <-> ATTACHMENT AWARENESS
@@ -4524,27 +4521,12 @@ export const Route = createFileRoute("/api/chat-ai")({
           //  * the same announcement was repeated while the images were
           //    already attached, which reads like a bot with no awareness of
           //    what it just sent.
-          // Either way the sentence about the ACT of sending is removed. When
-          // nothing is attached yet, we first try to actually attach the photo
-          // of the product this turn is about, so the customer gets the image
-          // instead of a broken promise.
+          // Either way the sentence about the ACT of sending is removed. The
+          // code deliberately does NOT guess a product to attach here:
+          // guessing from the reply text is exactly what used to fire photos
+          // at random moments in the conversation.
           if (reply && replyPromisesPhoto(reply)) {
-            if (agentAttachments.length === 0) {
-              const target =
-                showableProductId(merchantData.products, matchedProductId) ??
-                (findNamedProduct(
-                  [message, reply],
-                  merchantData.products as any[],
-                  (p: any) => isProductShowable(p),
-                ) as { id: string } | null)?.id ??
-                null;
-              if (target) {
-                const color = requestedColorFor(target);
-                await executeAttachProductMedia(
-                  JSON.stringify({ product_id: target, limit: 4, ...(color ? { color } : {}) }),
-                );
-              }
-            }
+
             const stripped = stripPhotoPromise(reply);
             if (stripped) {
               reply = stripped;
