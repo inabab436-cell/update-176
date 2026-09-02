@@ -192,10 +192,14 @@ export function scrubInternalContextLeaks(
   reply: string,
   index: InternalContextIndex,
 ): string {
-  const original = String(reply ?? "");
+  // Marker layer FIRST: internal section tags the model echoed or invented
+  // (including closing counterparts that exist nowhere in the injected text)
+  // are removed before the verbatim comparison runs.
+  const original = stripInternalMarkers(String(reply ?? ""), index.markers);
   if (!original.trim()) return "";
 
   const rawLines = original.split(/\r?\n/);
+
   // A single plain fact stated verbatim is normal service; two or more
   // verbatim internal lines in one reply is a dump of internal material.
   const plainMatches = rawLines.filter((l) => {
