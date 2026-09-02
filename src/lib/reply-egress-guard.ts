@@ -177,7 +177,7 @@ export function buildInternalContextIndex(
     for (const d of digitRuns(text)) digits.delete(d);
   }
 
-  return { lines, structured, digits };
+  return { lines, structured, digits, markers };
 }
 
 function splitSentences(line: string): string[] {
