@@ -131,10 +131,13 @@ export function buildInternalContextIndex(
   const lines = new Set<string>();
   const structured = new Set<string>();
   const digits = new Set<string>();
+  const markers = new Set<string>();
 
   for (const src of internalSources) {
     const text = String(src ?? "");
     if (!text.trim()) continue;
+    for (const name of markerNamesOf(text)) markers.add(name);
+
     for (const rawLine of text.split(/\r?\n/)) {
       // Index the whole line and its pipe/semicolon separated segments so a
       // single copied field is caught as well as a copied line.
