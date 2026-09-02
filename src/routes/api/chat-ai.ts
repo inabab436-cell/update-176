@@ -4507,27 +4507,12 @@ export const Route = createFileRoute("/api/chat-ai")({
           //  * the same announcement was repeated while the images were
           //    already attached, which reads like a bot with no awareness of
           //    what it just sent.
-          // Either way the sentence about the ACT of sending is removed. When
-          // nothing is attached yet, we first try to actually attach the photo
-          // of the product this turn is about, so the customer gets the image
-          // instead of a broken promise.
+          // Either way the sentence about the ACT of sending is removed. The
+          // code deliberately does NOT guess a product to attach here:
+          // guessing from the reply text is exactly what used to fire photos
+          // at random moments in the conversation.
           if (reply && replyPromisesPhoto(reply)) {
-            if (agentAttachments.length === 0) {
-              const target =
-                showableProductId(merchantData.products, matchedProductId) ??
-                (findNamedProduct(
-                  [message, reply],
-                  merchantData.products as any[],
-                  (p: any) => isProductShowable(p),
-                ) as { id: string } | null)?.id ??
-                null;
-              if (target) {
-                const color = requestedColorFor(target);
-                await executeAttachProductMedia(
-                  JSON.stringify({ product_id: target, limit: 4, ...(color ? { color } : {}) }),
-                );
-              }
-            }
+
             const stripped = stripPhotoPromise(reply);
             if (stripped) {
               reply = stripped;
