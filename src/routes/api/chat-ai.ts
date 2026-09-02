@@ -4394,9 +4394,12 @@ export const Route = createFileRoute("/api/chat-ai")({
           }
 
           // Media attachment belongs to the agent (`attach_product_media`).
-          // These fallbacks only ever fire for a product that is present in
-          // THIS turn's fresh snapshot and still has stock — never for a
-          // [SOLD_OUT] product.
+          // The only fallback left is the customer's own explicit request: he
+          // asked to see it, or he sent a picture of it, and the agent did not
+          // attach anything. Everything else — recommending, comparing, simply
+          // mentioning a product — is the agent's judgement call in the same
+          // turn it writes the text, which is what stops photos from arriving
+          // in the middle of collecting an address or confirming an order.
           const fallbackMatchedId = showableProductId(merchantData.products, matchedProductId);
           if (
             fallbackMatchedId &&
@@ -4409,25 +4412,6 @@ export const Route = createFileRoute("/api/chat-ai")({
             );
           }
 
-          // Deterministic sales fallback: the product the TURN is about — the
-          // one the customer named, or the one the agent's own draft reply is
-          // talking about — is shown now if the model forgot the media tool.
-          // Matching the draft reply too is what makes the text and the photo
-          // agree: the agent can no longer write "ده شكله" with nothing sent.
-          if (agentAttachments.length === 0) {
-            const named = findNamedProduct(
-              [message, reply],
-              merchantData.products as any[],
-              (p: any) => isProductShowable(p),
-            ) as (typeof merchantData.products)[number] | null;
-
-            if (named) {
-              const color = requestedColorFor(named.id);
-              await executeAttachProductMedia(
-                JSON.stringify({ product_id: named.id, limit: 4, ...(color ? { color } : {}) }),
-              );
-            }
-          }
 
           // ---------------------------------------------------------------
           // TEXT <-> ATTACHMENT AWARENESS
