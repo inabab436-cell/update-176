@@ -7,7 +7,7 @@ import { isProductShowable, showableProductId } from "@/lib/product-media-availa
 import { findNamedProduct } from "@/lib/product-name-match";
 
 import { buildSuggestableOptionsBlock } from "@/lib/suggestable-options";
-import { scrubAgainstInternalContext } from "@/lib/reply-egress-guard";
+import { scrubAgainstInternalContext, stripInternalMarkers } from "@/lib/reply-egress-guard";
 import {
   buildAttachmentContextMessage,
   needsAttachmentAwareRegeneration,
@@ -5087,6 +5087,14 @@ function jsonResponse(payload: unknown, status = 200, extraHeaders?: HeadersInit
 export function sanitizeAssistantReply(raw: string): string {
   let text = String(raw ?? "");
   if (!text.trim()) return "";
+
+  // 0) Internal section markers in ANY bracketed ALL-CAPS form, opening or
+  //    closing ("[LIVE AVAILABILITY VERDICT — …]", "[/LIVE AVAILABILITY
+  //    VERDICT]"). Shape-based so markers added later, and closing tags the
+  //    model invents on its own, are covered without a keyword list.
+  text = stripInternalMarkers(text);
+  if (!text.trim()) return "";
+
 
   // 1) Strip known XML-style internal blocks entirely.
   text = text.replace(/<\s*customer_data\s*>[\s\S]*?<\s*\/\s*customer_data\s*>/gi, "");

@@ -33,10 +33,70 @@ export interface InternalContextIndex {
    */
   structured: Set<string>;
   digits: Set<string>;
+  /**
+   * Names of the bracketed internal section markers that were injected this
+   * turn (e.g. "LIVE AVAILABILITY VERDICT"). Indexed separately because the
+   * model frequently emits a marker it INVENTED rather than copied — most
+   * often a closing counterpart such as "[/LIVE AVAILABILITY VERDICT]" that
+   * appears nowhere in the injected text, so the verbatim layer cannot see it.
+   */
+  markers: Set<string>;
 }
 
 const MIN_LINE_LEN = 12;
 const MIN_DIGITS = 7;
+
+/**
+ * Any bracketed ALL-CAPS latin marker, opening or closing, with an optional
+ * trailing description: "[LIVE AVAILABILITY VERDICT — computed …]",
+ * "[/LIVE AVAILABILITY VERDICT]", "<ACTIVE ORDER STATE>", "[/SECTION]".
+ *
+ * Shape-based on purpose: this is the only construct in the whole system that
+ * is never customer-facing in any language, so it covers markers added later
+ * and markers the model invents. It complements the verbatim layer instead of
+ * replacing it.
+ */
+const BRACKETED_MARKER_RE =
+  /[[(【<]\s*\/?\s*[A-Z][A-Z0-9]*(?:[ _\-/&][A-Z0-9]+)*\s*(?:[—–:-][^\])】>\n]*)?\s*\/?\s*[\])】>]/g;
+
+/** Extracts the marker names present in injected internal material. */
+function markerNamesOf(text: string): string[] {
+  const out: string[] = [];
+  for (const m of String(text ?? "").matchAll(BRACKETED_MARKER_RE)) {
+    const name = normalizeForLeakCheck(m[0].replace(/[[(【<\])】>]/g, "").split(/[—–:]/)[0] ?? "");
+    if (name.length >= 4) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * Removes internal section markers from a customer-facing reply: every
+ * bracketed ALL-CAPS marker, plus opening/closing forms of the exact marker
+ * names injected this turn (which may be mixed case). Lines that consisted of
+ * nothing but a marker disappear completely.
+ */
+export function stripInternalMarkers(reply: string, markers?: Set<string>): string {
+  let text = String(reply ?? "").replace(BRACKETED_MARKER_RE, "");
+
+  if (markers && markers.size) {
+    text = text.replace(
+      /[[(【<]\s*\/?\s*([^\])】>\n]{3,120}?)\s*[\])】>]/g,
+      (whole, inner: string) => {
+        const name = normalizeForLeakCheck(String(inner).split(/[—–:]/)[0] ?? "");
+        return name.length >= 4 && markers.has(name) ? "" : whole;
+      },
+    );
+  }
+
+  return text
+    .split(/\r?\n/)
+    .filter((line, i, all) => line.trim() !== "" || (i > 0 && all[i - 1]?.trim() !== ""))
+    .join("\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 
 /** Normalises text so formatting differences cannot bypass the comparison. */
 export function normalizeForLeakCheck(input: string): string {
@@ -71,10 +131,13 @@ export function buildInternalContextIndex(
   const lines = new Set<string>();
   const structured = new Set<string>();
   const digits = new Set<string>();
+  const markers = new Set<string>();
 
   for (const src of internalSources) {
     const text = String(src ?? "");
     if (!text.trim()) continue;
+    for (const name of markerNamesOf(text)) markers.add(name);
+
     for (const rawLine of text.split(/\r?\n/)) {
       // Index the whole line and its pipe/semicolon separated segments so a
       // single copied field is caught as well as a copied line.
@@ -114,7 +177,7 @@ export function buildInternalContextIndex(
     for (const d of digitRuns(text)) digits.delete(d);
   }
 
-  return { lines, structured, digits };
+  return { lines, structured, digits, markers };
 }
 
 function splitSentences(line: string): string[] {
@@ -129,10 +192,14 @@ export function scrubInternalContextLeaks(
   reply: string,
   index: InternalContextIndex,
 ): string {
-  const original = String(reply ?? "");
+  // Marker layer FIRST: internal section tags the model echoed or invented
+  // (including closing counterparts that exist nowhere in the injected text)
+  // are removed before the verbatim comparison runs.
+  const original = stripInternalMarkers(String(reply ?? ""), index.markers);
   if (!original.trim()) return "";
 
   const rawLines = original.split(/\r?\n/);
+
   // A single plain fact stated verbatim is normal service; two or more
   // verbatim internal lines in one reply is a dump of internal material.
   const plainMatches = rawLines.filter((l) => {
