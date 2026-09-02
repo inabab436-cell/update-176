@@ -3997,6 +3997,23 @@ export const Route = createFileRoute("/api/chat-ai")({
                 attached.push(url);
               }
 
+              // TRUTH ABOUT WHAT LEAVES WITH THE REPLY.
+              // A successful call that attached zero images used to come back
+              // as ok:true, so the agent kept writing as if a photo were on
+              // its way. Zero attached is a failure, stated as such.
+              if (attached.length === 0) {
+                return {
+                  result: {
+                    ok: false,
+                    error: "no_images_saved",
+                    attached_count: 0,
+                    in_stock_colors: inStockLabels,
+                    in_stock_variants: liveVariants,
+                    message: `NO image is attached to your reply and none will be. Do not mention a photo, do not promise one, do not say one is on the way. Confirm the model is available and name these live variants in one warm selling sentence: ${liveVariants.join(" | ") || "-"}.`,
+                  },
+                };
+              }
+
               return {
                 result: {
                   ok: true,
@@ -4007,17 +4024,14 @@ export const Route = createFileRoute("/api/chat-ai")({
                     : {}),
                   in_stock_colors: inStockLabels,
                   in_stock_variants: liveVariants,
-                  message:
-                    attached.length > 0
-                      ? soldOutRequestedLabel
-                        ? `The color "${soldOutRequestedLabel}" is out of stock, so the attached photos are of the in-stock variants only. Confirm to the customer that the SAME model is available — never say the product does not exist — name these exact live variants with their sizes: ${liveVariants.join(" | ") || inStockLabels.join(", ")}, and say in the same short natural sentence that "${soldOutRequestedLabel}" is not available right now. Do not describe the attached photos as the requested color, and end with one easy question that moves him to buy.`
-                        : colorVerified && matchedColorLabel
-                          ? `Images of the color "${matchedColorLabel}" will be shown to the customer alongside your reply. Do NOT paste the URLs in the text, and do NOT describe them as any other color.`
-                          : `Images will be shown to the customer alongside your reply; they are of in-stock variants only (${liveVariants.join(" | ") || "-"}). Do NOT paste the URLs in the text, and never mention any variant that is out of stock unless the customer asked about it by name.`
-                      : `No images are saved for the in-stock variants of this product. Still confirm the model is available and name these live variants in a warm selling sentence: ${liveVariants.join(" | ") || "-"}.`,
-
+                  message: soldOutRequestedLabel
+                    ? `The color "${soldOutRequestedLabel}" is out of stock, so the attached photos are of the in-stock variants only. Confirm to the customer that the SAME model is available — never say the product does not exist — name these exact live variants with their sizes: ${liveVariants.join(" | ") || inStockLabels.join(", ")}, and say in the same short natural sentence that "${soldOutRequestedLabel}" is not available right now. Do not describe the attached photos as the requested color, and end with one easy question that moves him to buy.`
+                    : colorVerified && matchedColorLabel
+                      ? `Images of the color "${matchedColorLabel}" will be shown to the customer alongside your reply. Do NOT paste the URLs in the text, and do NOT describe them as any other color.`
+                      : `Images will be shown to the customer alongside your reply; they are of in-stock variants only (${liveVariants.join(" | ") || "-"}). Do NOT paste the URLs in the text, and never mention any variant that is out of stock unless the customer asked about it by name.`,
                 },
               };
+
 
 
             } catch (e) {
